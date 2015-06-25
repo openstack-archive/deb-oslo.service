@@ -39,7 +39,7 @@ ifeq (,$(findstring nocheck, $(DEB_BUILD_OPTIONS)))
 endif
 
 override_dh_sphinxdoc:
-	sphinx-build -b html doc debian/python-oslo.service-doc/usr/share/doc/python-oslo.service-doc/html
+	sphinx-build -b html doc/source debian/python-oslo.service-doc/usr/share/doc/python-oslo.service-doc/html
 	dh_sphinxdoc -O--buildsystem=python_distutils
 
 override_dh_clean:
