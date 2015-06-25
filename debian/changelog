@@ -1,5 +1,5 @@
 python-oslo.service (0.1.0-1) experimental; urgency=medium
 
-  * Initial release. (Closes: #XXXXXX)
+  * Initial release. (Closes: #789920)
 
  -- Thomas Goirand <zigo@debian.org>  Thu, 25 Jun 2015 10:16:19 +0200
