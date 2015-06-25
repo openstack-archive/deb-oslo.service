@@ -1,4 +1,4 @@
-python-oslo.service (0.1.0-1) unstable; urgency=medium
+python-oslo.service (0.1.0-1) experimental; urgency=medium
 
   * Initial release. (Closes: #XXXXXX)
 
