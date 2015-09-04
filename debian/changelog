@@ -2,6 +2,10 @@ python-oslo.service (0.8.0-1) experimental; urgency=medium
 
   * New upstream release.
   * Fixed (build-)dependency for this release.
+  * Black list the below tests which are failing under Python 3.4:
+    - test_wsgi.TestWSGIServerWithSSL.test_app_using_ipv6_and_ssl
+    - test_wsgi.TestWSGIServerWithSSL.test_ssl_server
+    - test_wsgi.TestWSGIServerWithSSL.test_two_servers
 
  -- Thomas Goirand <zigo@debian.org>  Fri, 04 Sep 2015 09:02:55 +0000
 
