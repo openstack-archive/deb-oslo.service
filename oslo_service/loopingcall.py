@@ -20,9 +20,12 @@ import sys
 
 from eventlet import event
 from eventlet import greenthread
+from oslo_utils import excutils
+from oslo_utils import reflection
 from oslo_utils import timeutils
+import six
 
-from oslo_service._i18n import _LE, _LW
+from oslo_service._i18n import _LE, _LW, _
 
 LOG = logging.getLogger(__name__)
 
@@ -44,12 +47,35 @@ class LoopingCallDone(Exception):
         self.retvalue = retvalue
 
 
+def _safe_wrapper(f, kind, func_name):
+    """Wrapper that calls into wrapped function and logs errors as needed."""
+
+    def func(*args, **kwargs):
+        try:
+            return f(*args, **kwargs)
+        except LoopingCallDone:
+            raise  # let the outer handler process this
+        except Exception:
+            LOG.error(_LE('%(kind)s %(func_name)r failed'),
+                      {'kind': kind, 'func_name': func_name},
+                      exc_info=True)
+            return 0
+
+    return func
+
+
 class LoopingCallBase(object):
+    _KIND = _("Unknown looping call")
+
+    _RUN_ONLY_ONE_MESSAGE = _("A looping call can only run one function"
+                              " at a time")
+
     def __init__(self, f=None, *args, **kw):
         self.args = args
         self.kw = kw
         self.f = f
         self._running = False
+        self._thread = None
         self.done = None
 
     def stop(self):
@@ -58,47 +84,77 @@ class LoopingCallBase(object):
     def wait(self):
         return self.done.wait()
 
+    def _on_done(self, gt, *args, **kwargs):
+        self._thread = None
+        self._running = False
+
+    def _start(self, idle_for, initial_delay=None, stop_on_exception=True):
+        if self._thread is not None:
+            raise RuntimeError(self._RUN_ONLY_ONE_MESSAGE)
+        self._running = True
+        self.done = event.Event()
+        self._thread = greenthread.spawn(
+            self._run_loop, self._KIND, self.done, idle_for,
+            initial_delay=initial_delay, stop_on_exception=stop_on_exception)
+        self._thread.link(self._on_done)
+        return self.done
+
+    def _run_loop(self, kind, event, idle_for_func,
+                  initial_delay=None, stop_on_exception=True):
+        func_name = reflection.get_callable_name(self.f)
+        func = self.f if stop_on_exception else _safe_wrapper(self.f, kind,
+                                                              func_name)
+        if initial_delay:
+            greenthread.sleep(initial_delay)
+        try:
+            watch = timeutils.StopWatch()
+            while self._running:
+                watch.restart()
+                result = func(*self.args, **self.kw)
+                watch.stop()
+                if not self._running:
+                    break
+                idle = idle_for_func(result, watch.elapsed())
+                LOG.debug('%(kind)s %(func_name)r sleeping '
+                          'for %(idle).02f seconds',
+                          {'func_name': func_name, 'idle': idle,
+                           'kind': kind})
+                greenthread.sleep(idle)
+        except LoopingCallDone as e:
+            event.send(e.retvalue)
+        except Exception:
+            exc_info = sys.exc_info()
+            try:
+                LOG.error(_LE('%(kind)s %(func_name)r failed'),
+                          {'kind': kind, 'func_name': func_name},
+                          exc_info=exc_info)
+                event.send_exception(*exc_info)
+            finally:
+                del exc_info
+            return
+        else:
+            event.send(True)
+
 
 class FixedIntervalLoopingCall(LoopingCallBase):
     """A fixed interval looping call."""
 
-    def start(self, interval, initial_delay=None):
-        self._running = True
-        done = event.Event()
+    _RUN_ONLY_ONE_MESSAGE = _("A fixed interval looping call can only run"
+                              " one function at a time")
 
-        def _inner():
-            if initial_delay:
-                greenthread.sleep(initial_delay)
+    _KIND = _('Fixed interval looping call')
 
-            try:
-                watch = timeutils.StopWatch()
-                while self._running:
-                    watch.restart()
-                    self.f(*self.args, **self.kw)
-                    watch.stop()
-                    if not self._running:
-                        break
-                    elapsed = watch.elapsed()
-                    delay = elapsed - interval
-                    if delay > 0:
-                        LOG.warning(_LW('task %(func_name)r run outlasted '
-                                        'interval by %(delay).2f sec'),
-                                    {'func_name': self.f, 'delay': delay})
-                    greenthread.sleep(-delay if delay < 0 else 0)
-            except LoopingCallDone as e:
-                self.stop()
-                done.send(e.retvalue)
-            except Exception:
-                LOG.exception(_LE('in fixed duration looping call'))
-                done.send_exception(*sys.exc_info())
-                return
-            else:
-                done.send(True)
-
-        self.done = done
-
-        greenthread.spawn_n(_inner)
-        return self.done
+    def start(self, interval, initial_delay=None, stop_on_exception=True):
+        def _idle_for(result, elapsed):
+            delay = elapsed - interval
+            if delay > 0:
+                func_name = reflection.get_callable_name(self.f)
+                LOG.warning(_LW('Function %(func_name)r run outlasted '
+                                'interval by %(delay).2f sec'),
+                            {'func_name': func_name, 'delay': delay})
+            return -delay if delay < 0 else 0
+        return self._start(_idle_for, initial_delay=initial_delay,
+                           stop_on_exception=stop_on_exception)
 
 
 class DynamicLoopingCall(LoopingCallBase):
@@ -108,37 +164,101 @@ class DynamicLoopingCall(LoopingCallBase):
     called again.
     """
 
-    def start(self, initial_delay=None, periodic_interval_max=None):
-        self._running = True
-        done = event.Event()
+    _RUN_ONLY_ONE_MESSAGE = _("A dynamic interval looping call can only run"
+                              " one function at a time")
 
-        def _inner():
-            if initial_delay:
-                greenthread.sleep(initial_delay)
+    _KIND = _('Dynamic interval looping call')
 
+    def start(self, initial_delay=None, periodic_interval_max=None,
+              stop_on_exception=True):
+        def _idle_for(suggested_delay, elapsed):
+            delay = suggested_delay
+            if periodic_interval_max is not None:
+                delay = min(delay, periodic_interval_max)
+            return delay
+        return self._start(_idle_for, initial_delay=initial_delay,
+                           stop_on_exception=stop_on_exception)
+
+
+class RetryDecorator(object):
+    """Decorator for retrying a function upon suggested exceptions.
+
+    The decorated function is retried for the given number of times, and the
+    sleep time between the retries is incremented until max sleep time is
+    reached. If the max retry count is set to -1, then the decorated function
+    is invoked indefinitely until an exception is thrown, and the caught
+    exception is not in the list of suggested exceptions.
+    """
+
+    def __init__(self, max_retry_count=-1, inc_sleep_time=10,
+                 max_sleep_time=60, exceptions=()):
+        """Configure the retry object using the input params.
+
+        :param max_retry_count: maximum number of times the given function must
+                                be retried when one of the input 'exceptions'
+                                is caught. When set to -1, it will be retried
+                                indefinitely until an exception is thrown
+                                and the caught exception is not in param
+                                exceptions.
+        :param inc_sleep_time: incremental time in seconds for sleep time
+                               between retries
+        :param max_sleep_time: max sleep time in seconds beyond which the sleep
+                               time will not be incremented using param
+                               inc_sleep_time. On reaching this threshold,
+                               max_sleep_time will be used as the sleep time.
+        :param exceptions: suggested exceptions for which the function must be
+                           retried, if no exceptions are provided (the default)
+                           then all exceptions will be reraised, and no
+                           retrying will be triggered.
+        """
+        self._max_retry_count = max_retry_count
+        self._inc_sleep_time = inc_sleep_time
+        self._max_sleep_time = max_sleep_time
+        self._exceptions = exceptions
+        self._retry_count = 0
+        self._sleep_time = 0
+
+    def __call__(self, f):
+        func_name = reflection.get_callable_name(f)
+
+        def _func(*args, **kwargs):
+            result = None
             try:
-                while self._running:
-                    idle = self.f(*self.args, **self.kw)
-                    if not self._running:
-                        break
+                if self._retry_count:
+                    LOG.debug("Invoking %(func_name)s; retry count is "
+                              "%(retry_count)d.",
+                              {'func_name': func_name,
+                               'retry_count': self._retry_count})
+                result = f(*args, **kwargs)
+            except self._exceptions:
+                with excutils.save_and_reraise_exception() as ctxt:
+                    LOG.warn(_LW("Exception which is in the suggested list of "
+                                 "exceptions occurred while invoking function:"
+                                 " %s."),
+                             func_name,
+                             exc_info=True)
+                    if (self._max_retry_count != -1 and
+                            self._retry_count >= self._max_retry_count):
+                        LOG.error(_LE("Cannot retry %(func_name)s upon "
+                                      "suggested exception "
+                                      "since retry count (%(retry_count)d) "
+                                      "reached max retry count "
+                                      "(%(max_retry_count)d)."),
+                                  {'retry_count': self._retry_count,
+                                   'max_retry_count': self._max_retry_count,
+                                   'func_name': func_name})
+                    else:
+                        ctxt.reraise = False
+                        self._retry_count += 1
+                        self._sleep_time += self._inc_sleep_time
+                        return self._sleep_time
+            raise LoopingCallDone(result)
 
-                    if periodic_interval_max is not None:
-                        idle = min(idle, periodic_interval_max)
-                    LOG.debug('Dynamic looping call %(func_name)r sleeping '
-                              'for %(idle).02f seconds',
-                              {'func_name': self.f, 'idle': idle})
-                    greenthread.sleep(idle)
-            except LoopingCallDone as e:
-                self.stop()
-                done.send(e.retvalue)
-            except Exception:
-                LOG.exception(_LE('in dynamic looping call'))
-                done.send_exception(*sys.exc_info())
-                return
-            else:
-                done.send(True)
+        @six.wraps(f)
+        def func(*args, **kwargs):
+            loop = DynamicLoopingCall(_func, *args, **kwargs)
+            evt = loop.start(periodic_interval_max=self._max_sleep_time)
+            LOG.debug("Waiting for function %s to return.", func_name)
+            return evt.wait()
 
-        self.done = done
-
-        greenthread.spawn(_inner)
-        return self.done
+        return func

@@ -22,7 +22,6 @@ from __future__ import print_function
 
 import threading
 
-import errno
 import logging
 import multiprocessing
 import os
@@ -36,12 +35,9 @@ import traceback
 import eventlet
 from eventlet import event
 import mock
-from mox3 import mox
 from oslotest import base as test_base
-from oslotest import moxstubout
 from six.moves import queue
 
-from oslo_service import eventlet_backdoor
 from oslo_service import service
 from oslo_service.tests import base
 
@@ -278,65 +274,6 @@ class _Service(service.Service):
 
 
 class LauncherTest(base.ServiceBaseTestCase):
-    def setUp(self):
-        super(LauncherTest, self).setUp()
-        self.mox = self.useFixture(moxstubout.MoxStubout()).mox
-
-    def test_backdoor_port(self):
-        self.config(backdoor_port='1234')
-
-        sock = self.mox.CreateMockAnything()
-        self.mox.StubOutWithMock(eventlet, 'listen')
-        self.mox.StubOutWithMock(eventlet, 'spawn_n')
-
-        eventlet.listen(('localhost', 1234)).AndReturn(sock)
-        sock.getsockname().AndReturn(('127.0.0.1', 1234))
-        eventlet.spawn_n(eventlet.backdoor.backdoor_server, sock,
-                         locals=mox.IsA(dict))
-
-        self.mox.ReplayAll()
-
-        svc = service.Service()
-        launcher = service.launch(self.conf, svc)
-        self.assertEqual(svc.backdoor_port, 1234)
-        launcher.stop()
-
-    def test_backdoor_inuse(self):
-        sock = eventlet.listen(('localhost', 0))
-        port = sock.getsockname()[1]
-        self.config(backdoor_port=port)
-        svc = service.Service()
-        self.assertRaises(socket.error,
-                          service.launch, self.conf, svc)
-        sock.close()
-
-    def test_backdoor_port_range_one_inuse(self):
-        self.config(backdoor_port='8800:8900')
-
-        sock = self.mox.CreateMockAnything()
-        self.mox.StubOutWithMock(eventlet, 'listen')
-        self.mox.StubOutWithMock(eventlet, 'spawn_n')
-
-        eventlet.listen(('localhost', 8800)).AndRaise(
-            socket.error(errno.EADDRINUSE, ''))
-        eventlet.listen(('localhost', 8801)).AndReturn(sock)
-        sock.getsockname().AndReturn(('127.0.0.1', 8801))
-        eventlet.spawn_n(eventlet.backdoor.backdoor_server, sock,
-                         locals=mox.IsA(dict))
-
-        self.mox.ReplayAll()
-
-        svc = service.Service()
-        launcher = service.launch(self.conf, svc)
-        self.assertEqual(svc.backdoor_port, 8801)
-        launcher.stop()
-
-    def test_backdoor_port_reverse_range(self):
-        # backdoor port should get passed to the service being launched
-        self.config(backdoor_port='8888:7777')
-        svc = service.Service()
-        self.assertRaises(eventlet_backdoor.EventletBackdoorConfigValueError,
-                          service.launch, self.conf, svc)
 
     def test_graceful_shutdown(self):
         # test that services are given a chance to clean up:
@@ -378,6 +315,28 @@ class LauncherTest(base.ServiceBaseTestCase):
         svc = mock.Mock()
         self.assertRaises(TypeError, service.launch, self.conf, svc)
 
+    @mock.patch("oslo_service.service.Services.add")
+    @mock.patch("oslo_service.eventlet_backdoor.initialize_if_enabled")
+    def test_check_service_base(self, initialize_if_enabled_mock,
+                                services_mock):
+        initialize_if_enabled_mock.return_value = None
+        launcher = service.Launcher(self.conf)
+        serv = _Service()
+        launcher.launch_service(serv)
+
+    @mock.patch("oslo_service.service.Services.add")
+    @mock.patch("oslo_service.eventlet_backdoor.initialize_if_enabled")
+    def test_check_service_base_fails(self, initialize_if_enabled_mock,
+                                      services_mock):
+        initialize_if_enabled_mock.return_value = None
+        launcher = service.Launcher(self.conf)
+
+        class FooService(object):
+            def __init__(self):
+                pass
+        serv = FooService()
+        self.assertRaises(TypeError, launcher.launch_service, serv)
+
 
 class ProcessLauncherTest(base.ServiceBaseTestCase):
 
@@ -411,28 +370,20 @@ class ProcessLauncherTest(base.ServiceBaseTestCase):
                          mock_kill.mock_calls)
         mock_service_stop.assert_called_once_with()
 
-    @mock.patch(
-        "oslo_service.service.ProcessLauncher._signal_handlers_set",
-        new_callable=lambda: set())
-    def test__signal_handlers_set(self, signal_handlers_set_mock):
-        callables = set()
-        l1 = service.ProcessLauncher(self.conf)
-        callables.add(l1._handle_signal)
-        self.assertEqual(1, len(service.ProcessLauncher._signal_handlers_set))
-        l2 = service.ProcessLauncher(self.conf)
-        callables.add(l2._handle_signal)
-        self.assertEqual(2, len(service.ProcessLauncher._signal_handlers_set))
-        self.assertEqual(callables,
-                         service.ProcessLauncher._signal_handlers_set)
-
-    @mock.patch(
-        "oslo_service.service.ProcessLauncher._signal_handlers_set",
-        new_callable=lambda: set())
-    def test__handle_class_signals(self, signal_handlers_set_mock):
-        signal_handlers_set_mock.update([mock.Mock(), mock.Mock()])
-        service.ProcessLauncher._handle_class_signals()
-        for m in service.ProcessLauncher._signal_handlers_set:
-            m.assert_called_once_with()
+    def test__handle_signals(self):
+        signal_handler = service.SignalHandler()
+        signal_handler.clear()
+        self.assertEqual(0,
+                         len(signal_handler._signal_handlers[signal.SIGTERM]))
+        call_1, call_2 = mock.Mock(), mock.Mock()
+        signal_handler.add_handler('SIGTERM', call_1)
+        signal_handler.add_handler('SIGTERM', call_2)
+        self.assertEqual(2,
+                         len(signal_handler._signal_handlers[signal.SIGTERM]))
+        signal_handler._handle_signals(signal.SIGTERM, 'test')
+        for m in signal_handler._signal_handlers[signal.SIGTERM]:
+            m.assert_called_once_with(signal.SIGTERM, 'test')
+        signal_handler.clear()
 
     @mock.patch("os.kill")
     @mock.patch("oslo_service.service.ProcessLauncher.stop")
@@ -464,6 +415,32 @@ class ProcessLauncherTest(base.ServiceBaseTestCase):
 
         reload_config_files_mock.assert_called_once_with()
         wrap_mock.service.reset.assert_called_once_with()
+
+    @mock.patch("oslo_service.service.ProcessLauncher._start_child")
+    @mock.patch("oslo_service.service.ProcessLauncher.handle_signal")
+    @mock.patch("eventlet.greenio.GreenPipe")
+    @mock.patch("os.pipe")
+    def test_check_service_base(self, pipe_mock, green_pipe_mock,
+                                handle_signal_mock, start_child_mock):
+        pipe_mock.return_value = [None, None]
+        launcher = service.ProcessLauncher(self.conf)
+        serv = _Service()
+        launcher.launch_service(serv, workers=0)
+
+    @mock.patch("oslo_service.service.ProcessLauncher._start_child")
+    @mock.patch("oslo_service.service.ProcessLauncher.handle_signal")
+    @mock.patch("eventlet.greenio.GreenPipe")
+    @mock.patch("os.pipe")
+    def test_check_service_base_fails(self, pipe_mock, green_pipe_mock,
+                                      handle_signal_mock, start_child_mock):
+        pipe_mock.return_value = [None, None]
+        launcher = service.ProcessLauncher(self.conf)
+
+        class FooService(object):
+            def __init__(self):
+                pass
+        serv = FooService()
+        self.assertRaises(TypeError, launcher.launch_service, serv, 0)
 
 
 class GracefulShutdownTestService(service.Service):

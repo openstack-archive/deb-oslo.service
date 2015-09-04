@@ -12,6 +12,7 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
+from eventlet.green import threading as greenthreading
 import mock
 from oslotest import base as test_base
 
@@ -45,12 +46,41 @@ class LoopingCallTestCase(test_base.BaseTestCase):
         timer = loopingcall.FixedIntervalLoopingCall(_raise_it)
         self.assertRaises(RuntimeError, timer.start(interval=0.5).wait)
 
+    def _raise_and_then_done(self):
+        if self.num_runs == 0:
+            raise loopingcall.LoopingCallDone(False)
+        else:
+            self.num_runs = self.num_runs - 1
+            raise RuntimeError()
+
+    def test_do_not_stop_on_exception(self):
+        self.num_runs = 2
+
+        timer = loopingcall.FixedIntervalLoopingCall(self._raise_and_then_done)
+        res = timer.start(interval=0.5, stop_on_exception=False).wait()
+        self.assertFalse(res)
+
     def _wait_for_zero(self):
         """Called at an interval until num_runs == 0."""
         if self.num_runs == 0:
             raise loopingcall.LoopingCallDone(False)
         else:
             self.num_runs = self.num_runs - 1
+
+    def test_no_double_start(self):
+        wait_ev = greenthreading.Event()
+
+        def _run_forever_until_set():
+            if wait_ev.is_set():
+                raise loopingcall.LoopingCallDone(True)
+
+        timer = loopingcall.FixedIntervalLoopingCall(_run_forever_until_set)
+        timer.start(interval=0.01)
+
+        self.assertRaises(RuntimeError, timer.start, interval=0.01)
+
+        wait_ev.set()
+        timer.wait()
 
     def test_repeat(self):
         self.num_runs = 2
@@ -103,6 +133,23 @@ class DynamicLoopingCallTestCase(test_base.BaseTestCase):
         timer = loopingcall.DynamicLoopingCall(_raise_it)
         self.assertTrue(timer.start().wait())
 
+    def test_no_double_start(self):
+        wait_ev = greenthreading.Event()
+
+        def _run_forever_until_set():
+            if wait_ev.is_set():
+                raise loopingcall.LoopingCallDone(True)
+            else:
+                return 0.01
+
+        timer = loopingcall.DynamicLoopingCall(_run_forever_until_set)
+        timer.start()
+
+        self.assertRaises(RuntimeError, timer.start)
+
+        wait_ev.set()
+        timer.wait()
+
     def test_return_false(self):
         def _raise_it():
             raise loopingcall.LoopingCallDone(False)
@@ -116,6 +163,19 @@ class DynamicLoopingCallTestCase(test_base.BaseTestCase):
 
         timer = loopingcall.DynamicLoopingCall(_raise_it)
         self.assertRaises(RuntimeError, timer.start().wait)
+
+    def _raise_and_then_done(self):
+        if self.num_runs == 0:
+            raise loopingcall.LoopingCallDone(False)
+        else:
+            self.num_runs = self.num_runs - 1
+            raise RuntimeError()
+
+    def test_do_not_stop_on_exception(self):
+        self.num_runs = 2
+
+        timer = loopingcall.DynamicLoopingCall(self._raise_and_then_done)
+        timer.start(stop_on_exception=False).wait()
 
     def _wait_for_zero(self):
         """Called at an interval until num_runs == 0."""
@@ -149,3 +209,76 @@ class DynamicLoopingCallTestCase(test_base.BaseTestCase):
         timer.start(initial_delay=3).wait()
 
         sleep_mock.assert_has_calls([mock.call(3), mock.call(1)])
+
+
+class AnException(Exception):
+    pass
+
+
+class UnknownException(Exception):
+    pass
+
+
+class RetryDecoratorTest(test_base.BaseTestCase):
+    """Tests for retry decorator class."""
+
+    def test_retry(self):
+        result = "RESULT"
+
+        @loopingcall.RetryDecorator()
+        def func(*args, **kwargs):
+            return result
+
+        self.assertEqual(result, func())
+
+        def func2(*args, **kwargs):
+            return result
+
+        retry = loopingcall.RetryDecorator()
+        self.assertEqual(result, retry(func2)())
+        self.assertTrue(retry._retry_count == 0)
+
+    def test_retry_with_expected_exceptions(self):
+        result = "RESULT"
+        responses = [AnException(None),
+                     AnException(None),
+                     result]
+
+        def func(*args, **kwargs):
+            response = responses.pop(0)
+            if isinstance(response, Exception):
+                raise response
+            return response
+
+        sleep_time_incr = 0.01
+        retry_count = 2
+        retry = loopingcall.RetryDecorator(10, sleep_time_incr, 10,
+                                           (AnException,))
+        self.assertEqual(result, retry(func)())
+        self.assertTrue(retry._retry_count == retry_count)
+        self.assertEqual(retry_count * sleep_time_incr, retry._sleep_time)
+
+    def test_retry_with_max_retries(self):
+        responses = [AnException(None),
+                     AnException(None),
+                     AnException(None)]
+
+        def func(*args, **kwargs):
+            response = responses.pop(0)
+            if isinstance(response, Exception):
+                raise response
+            return response
+
+        retry = loopingcall.RetryDecorator(2, 0, 0,
+                                           (AnException,))
+        self.assertRaises(AnException, retry(func))
+        self.assertTrue(retry._retry_count == 2)
+
+    def test_retry_with_unexpected_exception(self):
+
+        def func(*args, **kwargs):
+            raise UnknownException(None)
+
+        retry = loopingcall.RetryDecorator()
+        self.assertRaises(UnknownException, retry(func))
+        self.assertTrue(retry._retry_count == 0)
