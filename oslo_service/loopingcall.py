@@ -15,11 +15,11 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
-import logging
 import sys
 
 from eventlet import event
 from eventlet import greenthread
+from oslo_log import log as logging
 from oslo_utils import excutils
 from oslo_utils import reflection
 from oslo_utils import timeutils
@@ -115,7 +115,7 @@ class LoopingCallBase(object):
                 if not self._running:
                     break
                 idle = idle_for_func(result, watch.elapsed())
-                LOG.debug('%(kind)s %(func_name)r sleeping '
+                LOG.trace('%(kind)s %(func_name)r sleeping '
                           'for %(idle).02f seconds',
                           {'func_name': func_name, 'idle': idle,
                            'kind': kind})
@@ -166,6 +166,10 @@ class DynamicLoopingCall(LoopingCallBase):
 
     _RUN_ONLY_ONE_MESSAGE = _("A dynamic interval looping call can only run"
                               " one function at a time")
+    _TASK_MISSING_SLEEP_VALUE_MESSAGE = _(
+        "A dynamic interval looping call should supply either an"
+        " interval or periodic_interval_max"
+    )
 
     _KIND = _('Dynamic interval looping call')
 
@@ -173,9 +177,20 @@ class DynamicLoopingCall(LoopingCallBase):
               stop_on_exception=True):
         def _idle_for(suggested_delay, elapsed):
             delay = suggested_delay
-            if periodic_interval_max is not None:
-                delay = min(delay, periodic_interval_max)
+            if delay is None:
+                if periodic_interval_max is not None:
+                    delay = periodic_interval_max
+                else:
+                    # Note(suro-patz): An application used to receive a
+                    #     TypeError thrown from eventlet layer, before
+                    #     this RuntimeError was introduced.
+                    raise RuntimeError(
+                        self._TASK_MISSING_SLEEP_VALUE_MESSAGE)
+            else:
+                if periodic_interval_max is not None:
+                    delay = min(delay, periodic_interval_max)
             return delay
+
         return self._start(_idle_for, initial_delay=initial_delay,
                            stop_on_exception=stop_on_exception)
 
