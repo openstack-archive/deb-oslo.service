@@ -1,8 +1,13 @@
-python-oslo.service (0.8.0-2) UNRELEASED; urgency=medium
+python-oslo.service (0.9.0-1) experimental; urgency=medium
 
+  [ James Page ]
   * d/control: Add missing BD on python{3}-requests.
 
- -- James Page <james.page@ubuntu.com>  Tue, 08 Sep 2015 10:44:57 +0100
+  [ Thomas Goirand ]
+  * New upstream release.
+  * Fixed (build-)depends for this release.
+
+ -- Thomas Goirand <zigo@debian.org>  Sun, 27 Sep 2015 19:11:44 +0200
 
 python-oslo.service (0.8.0-1) experimental; urgency=medium
 
