@@ -1,16 +1,20 @@
-========================================
-Welcome to oslo.service's documentation!
-========================================
+========================================================
+ oslo.service -- Library for running OpenStack services
+========================================================
 
-Library for running OpenStack services
+oslo.service provides a framework for defining new long-running
+services using the patterns established by other OpenStack
+applications. It also includes utilities long-running applications
+might need for working with SSL or WSGI, performing periodic
+operations, interacting with systemd, etc.
 
 .. toctree::
    :maxdepth: 2
 
    installation
    usage
+   opts
    contributing
-   history
 
 API Documentation
 =================
@@ -25,6 +29,14 @@ API Documentation
    api/sslutils
    api/systemd
    api/threadgroup
+
+Release Notes
+=============
+
+.. toctree::
+   :maxdepth: 1
+
+   history
 
 Indices and tables
 ==================

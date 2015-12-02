@@ -39,6 +39,10 @@ service_opts = [
                 default=True,
                 help='Enables or disables logging values of all registered '
                      'options when starting a service (at DEBUG level).'),
+    cfg.IntOpt('graceful_shutdown_timeout',
+               default=60,
+               help='Specify a timeout after which a gracefully shutdown '
+                    'server will exit. Zero value means endless wait.'),
 ]
 
 wsgi_opts = [
@@ -80,11 +84,27 @@ wsgi_opts = [
 ssl_opts = [
     cfg.StrOpt('ca_file',
                help="CA certificate file to use to verify "
-                    "connecting clients."),
+                    "connecting clients.",
+               deprecated_group='DEFAULT',
+               deprecated_name='ssl_ca_file'),
     cfg.StrOpt('cert_file',
                help="Certificate file to use when starting "
-                    "the server securely."),
+                    "the server securely.",
+               deprecated_group='DEFAULT',
+               deprecated_name='ssl_cert_file'),
     cfg.StrOpt('key_file',
                help="Private key file to use when starting "
-                    "the server securely."),
+                    "the server securely.",
+               deprecated_group='DEFAULT',
+               deprecated_name='ssl_key_file'),
+    cfg.StrOpt('version',
+               help='SSL version to use (valid only if SSL enabled). '
+                    'Valid values are TLSv1 and SSLv23. SSLv2, SSLv3, '
+                    'TLSv1_1, and TLSv1_2 may be available on some '
+                    'distributions.'
+               ),
+    cfg.StrOpt('ciphers',
+               help='Sets the list of available ciphers. value should be a '
+                    'string in the OpenSSL cipher list format.'
+               ),
 ]

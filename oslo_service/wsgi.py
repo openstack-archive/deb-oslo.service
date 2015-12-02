@@ -33,6 +33,7 @@ import webob.exc
 
 from oslo_log import log as logging
 from oslo_service import _options
+from oslo_service import service
 from oslo_service import sslutils
 from oslo_service._i18n import _, _LE, _LI
 
@@ -45,28 +46,39 @@ def list_opts():
     return [(None, copy.deepcopy(_options.wsgi_opts))]
 
 
+def register_opts(conf):
+    """Registers WSGI config options."""
+    return conf.register_opts(_options.wsgi_opts)
+
+
 class InvalidInput(Exception):
     message = _("Invalid input received: "
                 "Unexpected argument for periodic task creation: %(arg)s.")
 
 
-class Server(object):
+class Server(service.ServiceBase):
     """Server class to manage a WSGI server, serving a WSGI application."""
 
     def __init__(self, conf, name, app, host='0.0.0.0', port=0, pool_size=None,
                  protocol=eventlet.wsgi.HttpProtocol, backlog=128,
-                 use_ssl=False, max_url_len=None):
+                 use_ssl=False, max_url_len=None,
+                 logger_name='eventlet.wsgi.server'):
         """Initialize, but do not start, a WSGI server.
 
+        :param conf: Instance of ConfigOpts.
         :param name: Pretty name for logging.
         :param app: The WSGI application to serve.
         :param host: IP address to serve the application.
         :param port: Port number to server the application.
         :param pool_size: Maximum number of eventlets to spawn concurrently.
+        :param protocol: Protocol class.
         :param backlog: Maximum number of queued connections.
+        :param use_ssl: Wraps the socket in an SSL context if True.
         :param max_url_len: Maximum length of permitted URLs.
+        :param logger_name: The name for the logger.
         :returns: None
         :raises: InvalidInput
+        :raises: EnvironmentError
         """
 
         self.conf = conf
@@ -82,14 +94,13 @@ class Server(object):
         self._protocol = protocol
         self.pool_size = pool_size or self.default_pool_size
         self._pool = eventlet.GreenPool(self.pool_size)
-        self._logger = logging.getLogger("eventlet.wsgi.server")
+        self._logger = logging.getLogger(logger_name)
         self._use_ssl = use_ssl
         self._max_url_len = max_url_len
         self.client_socket_timeout = conf.client_socket_timeout or None
-        self.default_pool_size = conf.wsgi_default_pool_size
 
         if backlog < 1:
-            raise InvalidInput(reason='The backlog must be more than 0')
+            raise InvalidInput(reason=_('The backlog must be more than 0'))
 
         bind_addr = (host, port)
         # TODO(dims): eventlet's green dns/socket module does not actually
