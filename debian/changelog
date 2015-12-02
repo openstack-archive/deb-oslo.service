@@ -1,6 +1,7 @@
 python-oslo.service (1.0.0-1) experimental; urgency=medium
 
   * New upstream release.
+  * Fixed (build-)depends for this release.
 
  -- Thomas Goirand <zigo@debian.org>  Wed, 02 Dec 2015 15:55:49 +0100
 
