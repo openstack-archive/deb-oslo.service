@@ -2,6 +2,8 @@ python-oslo.service (1.0.0-1) experimental; urgency=medium
 
   * New upstream release.
   * Fixed (build-)depends for this release.
+  * Disable test_sslutils.SslutilsTestCase.test_is_enabled, as it's broken
+    with Python 3.
 
  -- Thomas Goirand <zigo@debian.org>  Wed, 02 Dec 2015 15:55:49 +0100
 
