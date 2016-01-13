@@ -1,8 +1,6 @@
 python-oslo.service (1.2.0-1) experimental; urgency=medium
 
   [ Corey Bryant ]
-  * d/patches/fix_exception_mock_py3.patch: Adjust @mock.patch when
-    running in Python3.x.
   * d/rules: Enable py3 tests and test_sslutils.SslutilsTestCase.test_is_enabled.
 
   [ Thomas Goirand ]
