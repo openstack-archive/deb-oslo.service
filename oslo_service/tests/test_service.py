@@ -55,10 +55,19 @@ class ServiceManagerTestCase(test_base.BaseTestCase):
 
 
 class ServiceWithTimer(service.Service):
+    def __init__(self, ready_event=None):
+        super(ServiceWithTimer, self).__init__()
+        self.ready_event = ready_event
+
     def start(self):
         super(ServiceWithTimer, self).start()
         self.timer_fired = 0
         self.tg.add_timer(1, self.timer_expired)
+
+    def wait(self):
+        if self.ready_event:
+            self.ready_event.set()
+        super(ServiceWithTimer, self).wait()
 
     def timer_expired(self):
         self.timer_fired = self.timer_fired + 1
@@ -81,9 +90,9 @@ class ServiceTestBase(base.ServiceBaseTestCase):
             # os._exit() which doesn't have this problem.
             status = 0
             try:
-                serv = ServiceWithTimer()
+                serv = ServiceWithTimer(*args, **kwargs)
                 launcher = service.launch(self.conf, serv, workers=workers)
-                launcher.wait(*args, **kwargs)
+                launcher.wait()
             except SystemExit as exc:
                 status = exc.code
             except BaseException:
@@ -109,8 +118,8 @@ class ServiceTestBase(base.ServiceBaseTestCase):
         # NOTE(markmc): ConfigOpts.log_opt_values() uses CONF.config-file
         self.conf(args=[], default_config_files=[])
         self.addCleanup(self.conf.reset)
-        self.addCleanup(self.conf.reset)
         self.addCleanup(self._reap_pid)
+        self.pid = 0
 
     def _reap_pid(self):
         if self.pid:
@@ -228,7 +237,7 @@ class ServiceRestartTest(ServiceTestBase):
     def _spawn(self):
         ready_event = multiprocessing.Event()
         self.pid = self._spawn_service(workers=1,
-                                       ready_callback=ready_event.set)
+                                       ready_event=ready_event)
         return ready_event
 
     def test_service_restart(self):
@@ -481,7 +490,7 @@ def exercise_graceful_test_service(sleep_amount, time_to_wait, graceful):
 class ServiceTest(test_base.BaseTestCase):
     def test_graceful_stop(self):
         # Here we wait long enough for the task to gracefully finish.
-        self.assertEqual(None, exercise_graceful_test_service(1, 2, True))
+        self.assertIsNone(exercise_graceful_test_service(1, 2, True))
 
     def test_ungraceful_stop(self):
         # Here we stop ungracefully, and will never see the task finish.
@@ -489,16 +498,18 @@ class ServiceTest(test_base.BaseTestCase):
                          exercise_graceful_test_service(1, 2, False))
 
 
-class EventletServerTest(base.ServiceBaseTestCase):
+class EventletServerProcessLauncherTest(base.ServiceBaseTestCase):
     def setUp(self):
-        super(EventletServerTest, self).setUp()
+        super(EventletServerProcessLauncherTest, self).setUp()
         self.conf(args=[], default_config_files=[])
         self.addCleanup(self.conf.reset)
+        self.workers = 3
 
     def run_server(self):
         queue = multiprocessing.Queue()
         proc = multiprocessing.Process(target=eventlet_service.run,
-                                       kwargs={'port_queue': queue})
+                                       args=(queue,),
+                                       kwargs={'workers': self.workers})
         proc.start()
 
         port = queue.get()
@@ -536,7 +547,7 @@ class EventletServerTest(base.ServiceBaseTestCase):
         # we can not wait forever ... so 3 seconds are enough
         time.sleep(3)
 
-        self.assertEqual(True, proc.is_alive())
+        self.assertTrue(proc.is_alive())
 
         conn.close()
         proc.join()
@@ -549,9 +560,15 @@ class EventletServerTest(base.ServiceBaseTestCase):
 
         time_before = time.time()
         os.kill(proc.pid, signal.SIGTERM)
-        self.assertEqual(True, proc.is_alive())
+        self.assertTrue(proc.is_alive())
         proc.join()
-        self.assertFalse(False, proc.is_alive())
+        self.assertFalse(proc.is_alive())
         time_after = time.time()
 
         self.assertTrue(time_after - time_before > graceful_shutdown_timeout)
+
+
+class EventletServerServiceLauncherTest(EventletServerProcessLauncherTest):
+    def setUp(self):
+        super(EventletServerServiceLauncherTest, self).setUp()
+        self.workers = 1
