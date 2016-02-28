@@ -60,7 +60,7 @@ Build-Depends-Indep: python-babel,
 Standards-Version: 3.9.6
 Vcs-Browser: http://anonscm.debian.org/gitweb/?p=openstack/python-oslo.service.git
 Vcs-Git: git://anonscm.debian.org/openstack/python-oslo.service.git
-Homepage: http://github.com/openstack/oslo.service
+Homepage: https://github.com/openstack/oslo.service
 
 Package: python-oslo.service
 Architecture: all
