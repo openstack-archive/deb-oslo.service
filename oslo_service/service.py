@@ -153,9 +153,25 @@ class SignalHandler(object):
             return
         signo = self._signals_by_name[sig]
         self._signal_handlers[signo].add(handler)
-        signal.signal(signo, self._handle_signals)
+        signal.signal(signo, self._handle_signal)
 
-    def _handle_signals(self, signo, frame):
+    def _handle_signal(self, signo, frame):
+        # This method can be called anytime, even between two Python
+        # instructions. It's scheduled by the C signal handler of Python using
+        # Py_AddPendingCall().
+        #
+        # We only do one thing: schedule a call to _handle_signal_cb() later.
+        # eventlet.spawn() is not signal-safe: _handle_signal() can be called
+        # during a call to eventlet.spawn(). This case is supported, it is
+        # ok to schedule multiple calls to _handle_signal() with the same
+        # signal number.
+        #
+        # To call to _handle_signal_cb() is delayed to avoid reentrant calls to
+        # _handle_signal_cb(). It avoids race conditions like reentrant call to
+        # clear(): clear() is not reentrant (bug #1538204).
+        eventlet.spawn(self._handle_signal_cb, signo, frame)
+
+    def _handle_signal_cb(self, signo, frame):
         for handler in self._signal_handlers[signo]:
             handler(signo, frame)
 
@@ -275,6 +291,7 @@ class ServiceLauncher(Launcher):
             status = exc.code
             signo = exc.signo
         except SystemExit as exc:
+            self.stop()
             status = exc.code
         except Exception:
             self.stop()
@@ -551,7 +568,7 @@ class ProcessLauncher(object):
         except eventlet.greenlet.GreenletExit:
             LOG.info(_LI("Wait called after thread killed. Cleaning up."))
 
-        # if we are here it means that we try to do gracefull shutdown.
+        # if we are here it means that we are trying to do graceful shutdown.
         # add alarm watching that graceful_shutdown_timeout is not exceeded
         if (self.conf.graceful_shutdown_timeout and
                 self.signal_handler.is_signal_supported('SIGALRM')):
@@ -589,13 +606,8 @@ class Service(ServiceBase):
     def __init__(self, threads=1000):
         self.tg = threadgroup.ThreadGroup(threads)
 
-        # signal that the service is done shutting itself down:
-        self._done = event.Event()
-
     def reset(self):
         """Reset a service in case it received a SIGHUP."""
-        # NOTE(Fengqian): docs for Event.reset() recommend against using it
-        self._done = event.Event()
 
     def start(self):
         """Start a service."""
@@ -607,14 +619,10 @@ class Service(ServiceBase):
                or terminate them instantly
         """
         self.tg.stop(graceful)
-        self.tg.wait()
-        # Signal that service cleanup is done:
-        if not self._done.ready():
-            self._done.send()
 
     def wait(self):
         """Wait for a service to shut down."""
-        self._done.wait()
+        self.tg.wait()
 
 
 class Services(object):
@@ -668,8 +676,13 @@ class Services(object):
         :returns: None
 
         """
-        service.start()
-        done.wait()
+        try:
+            service.start()
+        except Exception:
+            LOG.exception(_LE('Error starting thread.'))
+            raise SystemExit(1)
+        else:
+            done.wait()
 
 
 def launch(conf, service, workers=1):
