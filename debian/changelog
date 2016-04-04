@@ -1,4 +1,4 @@
-python-oslo.service (1.7.0-1) UNRELEASED; urgency=medium
+python-oslo.service (1.8.0-1) unstable; urgency=medium
 
   [ Ivan Udovichenko ]
   * New upstream release.
@@ -10,6 +10,7 @@ python-oslo.service (1.7.0-1) UNRELEASED; urgency=medium
 
   [ Thomas Goirand ]
   * New upstream release.
+  * Uploading to unstable.
   * Fixed (build-)depends for this release.
   * Standards-Version: 3.9.7 (no change).
 
