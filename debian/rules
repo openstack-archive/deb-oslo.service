@@ -25,13 +25,25 @@ override_dh_install:
 override_dh_auto_test:
 ifeq (,$(findstring nocheck, $(DEB_BUILD_OPTIONS)))
 	@echo "===> Running tests"
-	set -e ; set -x ; for i in 2.7 $(PYTHON3S) ; do \
+	set -e ; set -x ; for i in 2.7 ; do \
 		PYMAJOR=`echo $$i | cut -d'.' -f1` ; \
 		echo "===> Testing with python$$i (python$$PYMAJOR)" ; \
 		rm -rf .testrepository ; \
 		testr-python$$PYMAJOR init ; \
 		TEMP_REZ=`mktemp -t` ; \
 		PYTHONPATH=$(CURDIR) PYTHON=python$$i testr-python$$PYMAJOR run --subunit 'oslo_service\.tests\.(?!(.*test_wsgi\.TestWSGIServerWithSSL\.test_app_using_ipv6_and_ssl.*|.*test_wsgi\.TestWSGIServerWithSSL\.test_ssl_server.*|.*test_wsgi\.TestWSGIServerWithSSL\.test_two_servers.*))' | tee $$TEMP_REZ | subunit2pyunit ; \
+		cat $$TEMP_REZ | subunit-filter -s --no-passthrough | subunit-stats ; \
+		rm -f $$TEMP_REZ ; \
+		testr-python$$PYMAJOR slowest ; \
+	done
+	@echo "===> Running tests"
+	set -e ; set -x ; for i in $(PYTHON3S) ; do \
+		PYMAJOR=`echo $$i | cut -d'.' -f1` ; \
+		echo "===> Testing with python$$i (python$$PYMAJOR)" ; \
+		rm -rf .testrepository ; \
+		testr-python$$PYMAJOR init ; \
+		TEMP_REZ=`mktemp -t` ; \
+		PYTHONPATH=$(CURDIR) PYTHON=python$$i testr-python$$PYMAJOR run --subunit 'oslo_service\.tests\.(?!(.*test_wsgi\.TestWSGIServerWithSSL\.test_app_using_ipv6_and_ssl.*|.*test_wsgi\.TestWSGIServerWithSSL\.test_ssl_server.*|.*test_wsgi\.TestWSGIServerWithSSL\.test_two_servers.*|.*test_service\.EventletServerServiceLauncherTest\.test_graceful_stop_with_exceeded_graceful_shutdown_timeout.*|.*test_service.EventletServerServiceLauncherTest.test_shuts_down_on_sigint_when_client_connected.*|.*test_service.ServiceLauncherTest.test_child_signal_sighup.*))' | tee $$TEMP_REZ | subunit2pyunit ; \
 		cat $$TEMP_REZ | subunit-filter -s --no-passthrough | subunit-stats ; \
 		rm -f $$TEMP_REZ ; \
 		testr-python$$PYMAJOR slowest ; \
