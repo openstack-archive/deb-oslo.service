@@ -56,7 +56,7 @@ Build-Depends-Indep: python-babel,
                      python3-webob,
                      subunit,
                      testrepository,
-Standards-Version: 3.9.7
+Standards-Version: 3.9.8
 Vcs-Browser: https://anonscm.debian.org/cgit/openstack/python-oslo.service.git/
 Vcs-Git: https://anonscm.debian.org/git/openstack/python-oslo.service.git
 Homepage: https://github.com/openstack/oslo.service
