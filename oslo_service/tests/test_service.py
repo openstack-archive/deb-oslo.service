@@ -84,8 +84,8 @@ class ServiceTestBase(base.ServiceBaseTestCase):
 
     def _spawn_service(self,
                        workers=1,
-                       service_to_launch=ServiceWithTimer,
-                       *args, **kwargs):
+                       service_maker=None,
+                       launcher_maker=None):
         self.workers = workers
         pid = os.fork()
         if pid == 0:
@@ -99,8 +99,12 @@ class ServiceTestBase(base.ServiceBaseTestCase):
             # os._exit() which doesn't have this problem.
             status = 0
             try:
-                serv = service_to_launch(*args, **kwargs)
-                launcher = service.launch(self.conf, serv, workers=workers)
+                serv = service_maker() if service_maker else ServiceWithTimer()
+                if launcher_maker:
+                    launcher = launcher_maker()
+                    launcher.launch_service(serv, workers=workers)
+                else:
+                    launcher = service.launch(self.conf, serv, workers=workers)
                 status = launcher.wait()
             except SystemExit as exc:
                 status = exc.code
@@ -212,7 +216,8 @@ class ServiceLauncherTest(ServiceTestBase):
         self.assertEqual(os.WEXITSTATUS(status), 0)
 
     def test_crashed_service(self):
-        self.pid = self._spawn_service(service_to_launch=ServiceCrashOnStart)
+        service_maker = lambda: ServiceCrashOnStart()
+        self.pid = self._spawn_service(service_maker=service_maker)
         status = self._reap_test()
         self.assertTrue(os.WIFEXITED(status))
         self.assertEqual(os.WEXITSTATUS(status), 1)
@@ -251,8 +256,8 @@ class ServiceRestartTest(ServiceTestBase):
 
     def _spawn(self):
         ready_event = multiprocessing.Event()
-        self.pid = self._spawn_service(workers=1,
-                                       ready_event=ready_event)
+        service_maker = lambda: ServiceWithTimer(ready_event=ready_event)
+        self.pid = self._spawn_service(service_maker=service_maker)
         return ready_event
 
     def test_service_restart(self):
@@ -278,6 +283,58 @@ class ServiceRestartTest(ServiceTestBase):
         status = self._reap_test()
         self.assertTrue(os.WIFEXITED(status))
         self.assertEqual(os.WEXITSTATUS(status), 0)
+
+    def test_mutate_hook_service_launcher(self):
+        """Test mutate_config_files is called by ServiceLauncher on SIGHUP.
+
+        Not using _spawn_service because ServiceLauncher doesn't fork and it's
+        simplest to stay all in one process.
+        """
+        mutate = multiprocessing.Event()
+        self.conf.register_mutate_hook(lambda c, f: mutate.set())
+        launcher = service.launch(
+            self.conf, ServiceWithTimer(), restart_method='mutate')
+
+        self.assertFalse(mutate.is_set(), "Hook was called too early")
+        launcher.restart()
+        self.assertTrue(mutate.is_set(), "Hook wasn't called")
+
+    def test_mutate_hook_process_launcher(self):
+        """Test mutate_config_files is called by ProcessLauncher on SIGHUP.
+
+        Forks happen in _spawn_service and ProcessLauncher. So we get three
+        tiers of processes, the top tier being the test process. self.pid
+        refers to the middle tier, which represents our application. Both
+        service_maker and launcher_maker execute in the middle tier. The bottom
+        tier is the workers.
+
+        The behavior we want is that when the application (middle tier)
+        receives a SIGHUP, it catches that, calls mutate_config_files and
+        relaunches all the workers. This causes them to inherit the mutated
+        config.
+        """
+        mutate = multiprocessing.Event()
+        ready = multiprocessing.Event()
+
+        def service_maker():
+            self.conf.register_mutate_hook(lambda c, f: mutate.set())
+            return ServiceWithTimer(ready)
+
+        def launcher_maker():
+            return service.ProcessLauncher(self.conf, restart_method='mutate')
+
+        self.pid = self._spawn_service(1, service_maker, launcher_maker)
+
+        timeout = 5
+        ready.wait(timeout)
+        self.assertTrue(ready.is_set(), 'Service never became ready')
+        ready.clear()
+
+        self.assertFalse(mutate.is_set(), "Hook was called too early")
+        os.kill(self.pid, signal.SIGHUP)
+        ready.wait(timeout)
+        self.assertTrue(ready.is_set(), 'Service never back after SIGHUP')
+        self.assertTrue(mutate.is_set(), "Hook wasn't called")
 
 
 class _Service(service.Service):
@@ -315,7 +372,7 @@ class LauncherTest(base.ServiceBaseTestCase):
     def _test_launch_single(self, workers, mock_launch):
         svc = service.Service()
         service.launch(self.conf, svc, workers=workers)
-        mock_launch.assert_called_with(svc)
+        mock_launch.assert_called_with(svc, workers=workers)
 
     def test_launch_none(self):
         self._test_launch_single(None)

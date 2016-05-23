@@ -11,6 +11,7 @@
 #    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 #    License for the specific language governing permissions and limitations
 #    under the License.
+
 import logging
 import threading
 
@@ -19,7 +20,7 @@ from eventlet import greenpool
 
 from oslo_service._i18n import _LE
 from oslo_service import loopingcall
-
+from oslo_utils import timeutils
 
 LOG = logging.getLogger(__name__)
 
@@ -57,6 +58,9 @@ class Thread(object):
 
     def link(self, func, *args, **kwargs):
         self.thread.link(func, *args, **kwargs)
+
+    def cancel(self, *throw_args):
+        self.thread.cancel(*throw_args)
 
 
 class ThreadGroup(object):
@@ -154,3 +158,31 @@ class ThreadGroup(object):
         self._perform_action_on_threads(
             lambda x: x.wait(),
             lambda x: LOG.exception(_LE('Error waiting on thread.')))
+
+    def _any_threads_alive(self):
+        current = threading.current_thread()
+        for x in self.threads[:]:
+            if x.ident == current.ident:
+                # Don't check current thread.
+                continue
+            if not x.thread.dead:
+                return True
+        return False
+
+    def cancel(self, *throw_args, **kwargs):
+        self._perform_action_on_threads(
+            lambda x: x.cancel(*throw_args),
+            lambda x: LOG.exception(_LE('Error canceling thread.')))
+
+        timeout = kwargs.get('timeout', None)
+        if timeout is None:
+            return
+        wait_time = kwargs.get('wait_time', 1)
+        watch = timeutils.StopWatch(duration=timeout)
+        watch.start()
+        while self._any_threads_alive():
+            if not watch.expired():
+                eventlet.sleep(wait_time)
+                continue
+            LOG.debug("Cancel timeout reached, stopping threads.")
+            self.stop()
