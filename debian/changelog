@@ -10,6 +10,7 @@ python-oslo.service (1.10.0-1) UNRELEASED; urgency=medium
 
   [ Corey Bryant ]
   * New upstream release.
+  * d/gbp.conf: Update branch to debian/newton.
 
  -- Corey Bryant <corey.bryant@canonical.com>  Mon, 23 May 2016 09:14:44 -0400
 
