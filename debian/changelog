@@ -1,4 +1,4 @@
-python-oslo.service (1.10.0-1) UNRELEASED; urgency=medium
+python-oslo.service (1.11.0-1) UNRELEASED; urgency=medium
 
   [ Corey Bryant ]
   * d/control: Drop python-doc8 from BDs as it's not needed for package builds.
@@ -12,7 +12,7 @@ python-oslo.service (1.10.0-1) UNRELEASED; urgency=medium
   * New upstream release.
   * d/gbp.conf: Update branch to debian/newton.
 
- -- Corey Bryant <corey.bryant@canonical.com>  Mon, 23 May 2016 09:14:44 -0400
+ -- Corey Bryant <corey.bryant@canonical.com>  Wed, 01 Jun 2016 10:38:10 -0400
 
 python-oslo.service (1.8.0-1) unstable; urgency=medium
 
