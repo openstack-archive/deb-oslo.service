@@ -1,0 +1,10 @@
+Code-Review+2: Elena Ezhova <eezhova@mirantis.com>
+Code-Review+1: Rushi Agrawal <rushi.openstack@gmail.com>
+Code-Review+2: ChangBo Guo(gcb) <glongwave@gmail.com>
+Workflow+1: ChangBo Guo(gcb) <glongwave@gmail.com>
+Verified+2: Jenkins
+Submitted-by: Jenkins
+Submitted-at: Thu, 21 Jul 2016 16:48:41 +0000
+Reviewed-on: https://review.openstack.org/344543
+Project: openstack/deb-oslo.service
+Branch: refs/heads/master

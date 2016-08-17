@@ -1,0 +1,9 @@
+Code-Review+2: Elena Ezhova <eezhova@mirantis.com>
+Code-Review+2: Davanum Srinivas (dims) <davanum@gmail.com>
+Workflow+1: Davanum Srinivas (dims) <davanum@gmail.com>
+Verified+2: Jenkins
+Submitted-by: Jenkins
+Submitted-at: Thu, 02 Jun 2016 17:06:14 +0000
+Reviewed-on: https://review.openstack.org/323911
+Project: openstack/deb-oslo.service
+Branch: refs/heads/master
